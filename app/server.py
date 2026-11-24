@@ -488,6 +488,10 @@ def report_text(value):
     return html.escape(' '.join(value.splitlines())).replace('[', '&#91;')
 
 
+def step_duration(value):
+    return f'{value:,.0f} ms' if type(value) in (int, float) and value >= 0 else ''
+
+
 def make_report(folder):
     meta = read_json(folder / 'run.json', {})
     records = events(folder)
@@ -511,6 +515,14 @@ def make_report(folder):
     for e in records:
         if e.get('type') == 'test_end':
             report.extend(['## ' + e.get('title', ''), '', '- 상태: ' + e.get('status', ''), '', e.get('error', ''), ''])
+    steps = [record for record in records if record.get('type') == 'step_end']
+    if steps:
+        report.extend(['## 실행 단계', ''])
+        for step in steps:
+            details = filter(None, (report_text(step.get('title', '')), step_duration(step.get('duration')),
+                                    '실패' if step.get('error') else ''))
+            report.append('- ' + ' · '.join(details))
+        report.append('')
     for rel in paths:
         if pathlib.Path(rel).suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp'):
             report.append('![](' + rel.replace(' ', '%20') + ')')
@@ -594,7 +606,7 @@ def execution_log(folder, records):
         status = STATUS_LABELS.get(record.get('status'), record.get('status'))
         if record.get('type') == 'step_end' and record.get('error'):
             status = '실패'
-        parts = [label, record.get('title'), status, record.get('error')]
+        parts = [label, record.get('title'), status, step_duration(record.get('duration')), record.get('error')]
         lines.append(' · '.join(str(part) for part in parts if part))
     return '저장된 실행 기록', '\n'.join(lines) or '저장된 실행 로그가 없습니다.'
 
@@ -618,9 +630,14 @@ def report_html(folder):
                         status_label(e.get('status')) + '</span>' +
                         ('<pre class="error">' + esc(e['error']) + '</pre>' if e.get('error') else '') + '</li>'
                         for e in tests) or '<li class="muted">완료된 테스트가 없습니다.</li>'
-    step_rows = ''.join('<li><span class="mark">' + ('✗' if e.get('error') else '✓') + '</span> ' +
-                        esc(e.get('title')) + ('<pre class="error">' + esc(e['error']) + '</pre>' if e.get('error') else '') + '</li>'
-                        for e in steps) or '<li class="muted">기록된 단계가 없습니다.</li>'
+    step_rows = []
+    for step in steps:
+        marker = '✗' if step.get('error') else '✓'
+        elapsed = step_duration(step.get('duration'))
+        elapsed_html = f' <small class="muted">· {elapsed}</small>' if elapsed else ''
+        error_html = '<pre class="error">' + esc(step['error']) + '</pre>' if step.get('error') else ''
+        step_rows.append(f'<li><span class="mark">{marker}</span> {esc(step.get("title"))}{elapsed_html}{error_html}</li>')
+    steps_html = ''.join(step_rows) or '<li class="muted">기록된 단계가 없습니다.</li>'
     verification = verification_results(evs)
     verification_section = ''
     if verification['checks']:
@@ -664,7 +681,7 @@ def report_html(folder):
 {context_section}
 {verification_section}
 <section class="card"><h2>테스트 결과</h2><ul>{test_rows}</ul></section>
-<section class="card"><h2>실행 단계</h2><ul>{step_rows}</ul></section>
+<section class="card"><h2>실행 단계</h2><ul>{steps_html}</ul></section>
 {trace_section}
 <section class="card"><h2>캡처 {len(image_paths)}장</h2><div class="gallery">{captures}</div></section>
 {original}
@@ -747,14 +764,21 @@ class Handler(BaseHTTPRequestHandler):
             name = u.path.lstrip('/')
             content_type = 'text/css; charset=utf-8' if name.endswith('.css') else 'text/javascript; charset=utf-8'
             return self.send(200, (ROOT / 'app' / name).read_bytes(), content_type)
+        if u.path == '/templates/first-test.spec.js':
+            source = ROOT / 'app' / 'templates' / 'first-test.js'
+            return self.send(200, source.read_bytes(), 'text/plain; charset=utf-8')
         if u.path == '/markdown-it.mjs':
             script = ROOT / 'node_modules/markdown-it/dist/browser/markdown-it.esm.min.mjs'
             if script.is_file():
                 return self.send(200, script.read_bytes(), 'text/javascript; charset=utf-8')
         if u.path == '/api/state':
-            return self.send(200, {'settings': settings(), 'runs': history(), 'active': ACTIVE, 'stopping': STOP_REQUESTED,
+            with LOCK:
+                config = settings()
+                runs = history()
+                active, stopping = ACTIVE, STOP_REQUESTED
+            return self.send(200, {'settings': config, 'runs': runs, 'active': active, 'stopping': stopping,
                                    'folders': {'examples': str(ROOT / 'examples'), 'personal': str(DATA.resolve() / 'tests')},
-                                   'test_file_count': len(test_files(settings()['test_dir'])),
+                                   'test_file_count': len(test_files(config['test_dir'])),
                                    'node': bool(shutil.which('node')), 'playwright': (ROOT / 'node_modules/@playwright/test/cli.js').is_file()})
         if u.path == '/api/run':
             try:

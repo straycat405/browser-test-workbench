@@ -23,6 +23,13 @@ function isCompletedCheck(step) {
   }
   return true;
 }
+function timedStepName(step) {
+  if (step.category === 'test.step') return step.title;
+  if (step.category === 'pw:api' &&
+      /^(?:page\.waitForResponse|Wait for response|Wait for event "response")$/i.test(step.title)) {
+    return 'API 응답 대기';
+  }
+}
 class Reporter {
   onBegin(config, suite) {
     const projects = config.projects.map(({ name, use }) => ({
@@ -34,11 +41,13 @@ class Reporter {
   }
   onTestBegin(test, result) { emit('test_begin', { id: test.id, title: title(test), retry: result.retry }); }
   onStepBegin(test, result, step) {
-    if (step.category === 'test.step') emit('step_begin', { id: test.id, title: step.title });
+    const name = timedStepName(step);
+    if (name) emit('step_begin', { id: test.id, title: name });
   }
   onStepEnd(test, result, step) {
-    if (step.category === 'test.step') {
-      emit('step_end', { id: test.id, title: step.title, duration: step.duration, error: step.error?.message || '' });
+    const name = timedStepName(step);
+    if (name) {
+      emit('step_end', { id: test.id, title: name, duration: step.duration, error: step.error?.message || '' });
     } else if (isCompletedCheck(step)) {
       emit('check_end', {
         id: test.id,

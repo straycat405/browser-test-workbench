@@ -72,6 +72,9 @@ class WorkbenchTest(unittest.TestCase):
         data = self.wait_for_result(rid)
         self.assertEqual(data['run']['status'], 'passed', data)
         self.assertTrue(any(e['type'] == 'step_end' for e in data['events']))
+        waits = [event for event in data['events'] if event['type'] == 'step_end' and event['title'] == 'API 응답 대기']
+        self.assertEqual(len(waits), 1, [event.get('title') for event in data['events']])
+        self.assertGreaterEqual(waits[0]['duration'], 0)
         verification = data['verification']
         self.assertEqual((verification['passed'], verification['failed']), (2, 0))
         self.assertEqual([check['title'] for check in verification['checks']],
@@ -96,11 +99,30 @@ class WorkbenchTest(unittest.TestCase):
         self.assertIn('## 실행 조건', report)
         self.assertIn('## 검증 항목', report)
         self.assertIn('통과 2건 · 실패 0건', report)
+        self.assertRegex(report, r'API 응답 대기 · [\d,]+ ms')
         self.assertTrue(list(exported.rglob('*.png')))
         with self.assertRaises(ValueError):
             app.run_dir('../settings.json')
         self.assertFalse(list(ROOT.glob('**/run.json')))
 
+
+    def test_downloaded_test_template_runs(self):
+        test_folder = app.DATA / 'template-test'
+        test_folder.mkdir()
+        with urllib.request.urlopen(self.base + '/templates/first-test.spec.js') as response:
+            self.assertEqual(response.headers.get_content_type(), 'text/plain')
+            (test_folder / 'first-test.spec.js').write_bytes(response.read())
+
+        self.request('/api/settings', {'test_dir': str(test_folder), 'browser': 'chromium', 'headless': True,
+                                       'obsidian_enabled': False, 'obsidian_dir': ''})
+        rid = self.request('/api/start', {})['id']
+        data = self.wait_for_result(rid)
+        self.assertEqual(data['run']['status'], 'passed', data)
+        self.assertTrue(any(e['type'] == 'test_end' and e['title'].endswith('샘플 화면에서 저장 결과 확인')
+                            for e in data['events']))
+        self.assertTrue(any(e['type'] == 'step_end' and e['title'] == '저장 버튼 누르기' for e in data['events']))
+        self.assertEqual([check['title'] for check in data['verification']['checks']], ['저장 완료 문구가 표시된다'])
+        self.assertTrue(any(path.endswith('/result.png') for path in data['artifacts']))
 
     def test_import_existing_history(self):
         source = app.DATA / 'old-tool'

@@ -6,6 +6,16 @@ const path = require('node:path');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   try {
+    await page.addInitScript(() => {
+      window.desktopNotices = [];
+      window.Notification = class {
+        static permission = 'default';
+        static async requestPermission() { return this.permission = 'granted'; }
+        constructor(title, options) { window.desktopNotices.push({ title, ...options }); }
+      };
+      const hasFocus = document.hasFocus.bind(document);
+      document.hasFocus = () => !window.simulateBackground && hasFocus();
+    });
     await page.goto(process.env.BTW_TEST_URL);
     await page.waitForSelector('#settings[open]');
     const response = await page.request.get(new URL('/api/state', page.url()).href);
@@ -46,10 +56,38 @@ const path = require('node:path');
     assert.match(copied, /first-test\.spec\.js/);
     assert.match(copied, /\[URL\]/);
     assert.ok(!copied.includes(folders.personal), '공통 요청문에 개인 폴더 경로가 들어 있습니다.');
+    await page.locator('#aiTemplateButton').click();
+    const template = page.getByRole('dialog', { name: '테스트 파일 양식' });
+    await template.getByText(folders.personal, { exact: true }).waitFor();
+    const templateCode = await template.getByRole('textbox', { name: '양식 코드' }).inputValue();
+    assert.match(templateCode, /test\.step\('저장 버튼 누르기'/);
+    assert.match(templateCode, /저장 완료 문구가 표시된다/);
+    await template.getByRole('button', { name: '코드 복사' }).click();
+    await template.getByText('양식 코드를 복사했습니다.', { exact: true }).waitFor();
+    const copiedTemplate = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(copiedTemplate.replace(/\r\n/g, '\n'), templateCode);
+    const [templateDownload] = await Promise.all([
+      page.waitForEvent('download'),
+      template.getByRole('link', { name: '양식 다운로드' }).click(),
+    ]);
+    assert.equal(templateDownload.suggestedFilename(), 'first-test.spec.js');
+    assert.equal((await fs.readFile(await templateDownload.path(), 'utf8')).replace(/\r\n/g, '\n'), templateCode);
+    await page.keyboard.press('Escape');
+    await template.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#aiGuide').evaluate(dialog => dialog.open), true);
     await page.locator('#closeAiGuide').click();
     await page.locator('#aiGuideButton').click();
     await page.waitForSelector('#aiGuide[open]');
     await page.locator('#closeAiGuide').click();
+    await page.getByText('실행할 테스트가 없습니다.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#runs tr.selected').count(), 0);
+    await page.locator('#emptyFolderButton').waitFor();
+    await page.locator('#templateButton').waitFor();
+    await page.locator('#settingsButton').click();
+    await page.getByRole('button', { name: '데스크톱 알림 켜기' }).click();
+    await page.getByRole('button', { name: '데스크톱 알림 끄기' }).waitFor();
+    await page.locator('#cancelSettings').click();
+    await page.evaluate(() => { window.simulateBackground = true; });
     const headerHelp = page.locator('header #aiGuideButton + #helpButton');
     const desktop = page.viewportSize();
     await page.setViewportSize({ width: 390, height: 760 });
@@ -73,10 +111,19 @@ const path = require('node:path');
     ]);
     assert.equal(helpExampleResponse.ok(), true);
     const { id: helpExampleId } = await helpExampleResponse.json();
+    await page.waitForFunction(() => document.getElementById('runNotice').textContent === '테스트를 시작했습니다');
     await page.waitForFunction(id => {
       const row = document.querySelector('#runs tr.selected');
       return row?.dataset.run === id && row.textContent.includes('성공');
     }, helpExampleId, { timeout: 45000 });
+    await page.waitForFunction(() => /^테스트 성공 · \d+초$/.test(document.getElementById('runNotice').textContent));
+    const notices = await page.evaluate(id => window.desktopNotices.filter(notice => notice.tag.endsWith(id)), helpExampleId);
+    assert.deepEqual(notices.map(notice => notice.title), ['테스트를 시작했습니다', '테스트 성공']);
+    await page.reload();
+    await page.getByText('실행할 테스트가 없습니다.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#runs tr.selected').count(), 0);
+    await page.locator(`#runs tr[data-run="${helpExampleId}"] button`).click();
+    await page.locator('#current').getByRole('heading', { name: '선택한 실행 결과' }).waitFor();
 
     await fs.copyFile(path.join(folders.examples, 'example.spec.js'), path.join(folders.personal, 'first-test.spec.js'));
     const [startResponse] = await Promise.all([
@@ -128,6 +175,7 @@ const path = require('node:path');
     await report.close();
     const steps = await page.locator('#current .event').allTextContents();
     if (steps.filter(text => text.includes('제목과 본문 확인')).length !== 1) throw Error('완료한 단계가 중복 표시됩니다.');
+    assert.ok(steps.some(text => /API 응답 대기\s+[\d,]+ ms/.test(text)), '응답 대기 시간이 표시되지 않습니다.');
     const openRunTab = async label => {
       const [tab] = await Promise.all([
         page.context().waitForEvent('page'),
@@ -189,6 +237,7 @@ const path = require('node:path');
     await page.locator('#importSubmit').click();
     await page.waitForFunction(() => document.querySelector('#importMessage')?.textContent.includes('기존 기록 2건'));
     await page.locator('#importCancel').click();
+    await page.locator('#historySearch').fill('가져온 기록 · 샘플 실행');
     await page.locator('#runs tr').getByRole('button', { name: '가져온 기록 · 샘플 실행' }).click();
     await page.locator('#current').getByText('가져온 기록 · 샘플 실행', { exact: false }).first().waitFor();
     if (await page.locator('#gallery').getByRole('link', { name: 'report.md' }).count()) throw Error('기존 보고서 원문 링크가 중복 표시됩니다.');
