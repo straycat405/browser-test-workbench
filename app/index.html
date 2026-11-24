@@ -18,6 +18,10 @@
 .copy-field{font:13px/1.5 ui-monospace,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px;width:100%}
 textarea.copy-field{resize:vertical}.guide-actions{margin-top:12px}
 .dialog-title{justify-content:space-between;margin-bottom:12px}.dialog-title h2{margin:0}
+.verification-checks{list-style:none;margin:0;padding:0}
+.verification-checks li{padding:8px 0;overflow-wrap:anywhere}
+.verification-checks li+li{border-top:1px solid var(--line)}
+.verification-checks details{margin-top:4px}
 header button{white-space:nowrap}
 @media(max-width:800px){header{flex-wrap:wrap;gap:8px}}
 @media(max-width:560px){.setup-choices{grid-template-columns:1fr}}
@@ -89,7 +93,7 @@ header button{white-space:nowrap}
   <h3>어떻게 시작하나요?</h3>
   <ol class="guide-steps">
     <li><strong>예제 실행</strong>으로 샘플 웹페이지의 제목과 본문을 자동으로 확인해 보세요.</li>
-    <li><strong>실행 기록</strong>에서 방금 실행한 항목의 성공·실패를 확인하고 <strong>보고서</strong>에서 단계와 캡처를 봅니다.</li>
+    <li><strong>실행 기록</strong>에서 방금 실행한 항목을 고르고 <strong>보고서</strong>에서 검증 항목과 실행 단계, 캡처를 봅니다.</li>
     <li>내 화면을 테스트하려면 <strong>설정 → 폴더 선택</strong>에서 기존 Playwright 테스트 폴더를 고르세요. 새로 만들 때는 <strong>AI 테스트 안내</strong>에서 요청문과 파일 저장 방법을 확인하세요.</li>
     <li>파일을 준비한 뒤 <strong>폴더 내 테스트 실행</strong>을 누릅니다.</li>
   </ol>
@@ -126,7 +130,8 @@ header button{white-space:nowrap}
 기대 결과: [예: 결과 목록에 입력한 검색어가 표시된다]
 
 - @playwright/test의 test와 expect를 사용하고, 동작을 test.step으로 나눠 주세요.
-- 성공 여부는 expect로 확인하고, 마지막 화면은 test.info().outputPath('result.png')에 캡처해 주세요.
+- 성공 여부는 expect로 확인하고 두 번째 인자에 확인할 조건을 설명해 주세요. 예: expect(제목, '검색 결과 제목이 표시된다').toBeVisible()
+- 마지막 화면은 test.info().outputPath('result.png')에 캡처해 주세요.
 - 파일을 편집할 수 있으면 지정한 테스트 폴더에 새 파일로 저장하고, 기존 파일은 덮어쓰지 마세요. 채팅에서만 답할 수 있으면 복사할 전체 코드를 보여 주세요.
 - 계정 정보나 비밀번호는 코드에 넣지 마세요. 테스트 작성에 필요한 정보가 빠져 있으면 먼저 물어봐 주세요.</textarea>
   <div class="row guide-actions">
@@ -408,6 +413,22 @@ function failureSummary(run, events) {
     <p>${escapeHTML(next)}</p></div>`;
 }
 
+function verificationSection(verification) {
+  if (!verification?.checks.length) return '';
+  const rows = verification.checks.map(check => {
+    const status = check.status === 'passed' ? '통과' : '실패';
+    const details = check.error ? `<details><summary>실패 상세</summary><pre class="error">${escapeHTML(check.error)}</pre></details>` : '';
+    return `<li><div class="row"><span class="status ${escapeHTML(check.status)}">${status}</span>
+      <strong>${escapeHTML(check.title)}</strong></div>
+      <div class="sub">${escapeHTML(check.test)}</div>${details}</li>`;
+  }).join('');
+  return `<section id="verification-results" aria-labelledby="verification-title">
+      <h3 id="verification-title">검증 항목</h3>
+      <p class="sub">통과 ${verification.passed}건 · 실패 ${verification.failed}건</p>
+      <ul class="verification-checks">${rows}</ul>
+    </section>`;
+}
+
 async function loadRun() {
   const id = state.selected;
   if (!id) return;
@@ -451,6 +472,7 @@ async function loadRun() {
       </div>
       ${run.error ? `<p class="error">${escapeHTML(run.error)}</p>` : ''}
       ${failureSummary(run, detail.events)}
+      ${verificationSection(detail.verification)}
       ${errors}
       <h3>실행 단계</h3>
       ${list || '<p class="sub">기록된 단계가 없습니다.</p>'}`;

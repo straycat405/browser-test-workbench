@@ -5,8 +5,8 @@ test('웹 페이지 제목 확인', async ({ page }) => {
     await page.goto('data:text/html,<title>Example Domain</title><h1>Example Domain</h1>');
   });
   await test.step('제목과 본문 확인', async () => {
-    await expect(page).toHaveTitle(/Example Domain/);
-    await expect(page.locator('h1')).toHaveText('Example Domain');
+    await expect(page, '페이지 제목에 Example Domain이 표시된다').toHaveTitle(/Example Domain/);
+    await expect(page.locator('h1'), '본문 제목이 Example Domain과 일치한다').toHaveText('Example Domain');
     await page.screenshot({ path: test.info().outputPath('sample.png') });
   });
 });

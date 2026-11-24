@@ -475,6 +475,19 @@ def trace_paths(paths):
     return [path for path in paths if pathlib.PurePosixPath(path).name == 'trace.zip']
 
 
+def verification_results(records):
+    latest_attempts = {record['id']: record.get('retry', 0) for record in records
+                       if record.get('type') == 'test_begin'}
+    checks = [record for record in records if record.get('type') == 'check_end'
+              and record['retry'] == latest_attempts.get(record['id'], 0)]
+    passed = sum(check['status'] == 'passed' for check in checks)
+    return {'passed': passed, 'failed': len(checks) - passed, 'checks': checks}
+
+
+def report_text(value):
+    return html.escape(' '.join(value.splitlines())).replace('[', '&#91;')
+
+
 def make_report(folder):
     meta = read_json(folder / 'run.json', {})
     records = events(folder)
@@ -485,8 +498,15 @@ def make_report(folder):
     if fields:
         report.extend(['## 실행 조건', ''])
         for label, value in fields:
-            value = html.escape(' '.join(value.splitlines())).replace('[', '&#91;')
-            report.append(f'- {label}: {value}')
+            report.append(f'- {label}: {report_text(value)}')
+        report.append('')
+    verification = verification_results(records)
+    if verification['checks']:
+        report.extend(['## 검증 항목', '',
+                       f"통과 {verification['passed']}건 · 실패 {verification['failed']}건", ''])
+        for check in verification['checks']:
+            status = '통과' if check['status'] == 'passed' else '실패'
+            report.append(f"- **{status}** {report_text(check['title'])} ({report_text(check['test'])})")
         report.append('')
     for e in records:
         if e.get('type') == 'test_end':
@@ -515,7 +535,7 @@ def execution_log(folder, records):
             return '콘솔 출력', output
 
     event_labels = {'test_begin': '테스트 시작', 'test_end': '테스트 결과',
-                    'step_end': '단계', 'error': '오류', 'end': '실행 결과'}
+                    'step_end': '단계', 'check_end': '검증', 'error': '오류', 'end': '실행 결과'}
     lines = []
     for record in records:
         label = event_labels.get(record.get('type'))
@@ -551,6 +571,19 @@ def report_html(folder):
     step_rows = ''.join('<li><span class="mark">' + ('✗' if e.get('error') else '✓') + '</span> ' +
                         esc(e.get('title')) + ('<pre class="error">' + esc(e['error']) + '</pre>' if e.get('error') else '') + '</li>'
                         for e in steps) or '<li class="muted">기록된 단계가 없습니다.</li>'
+    verification = verification_results(evs)
+    verification_section = ''
+    if verification['checks']:
+        check_rows = []
+        for check in verification['checks']:
+            status = '통과' if check['status'] == 'passed' else '실패'
+            details = ('<details><summary>실패 상세</summary><pre class="error">' +
+                       esc(check['error']) + '</pre></details>') if check.get('error') else ''
+            check_rows.append(f"""<li><strong>{esc(check['title'])}</strong><span class="badge">{status}</span>
+<div class="meta">{esc(check['test'])}</div>{details}</li>""")
+        verification_section = f"""<section class="card" id="verification-results"><h2>검증 항목</h2>
+<p class="meta">통과 {verification['passed']}건 · 실패 {verification['failed']}건</p>
+<ul>{''.join(check_rows)}</ul></section>"""
     paths = artifacts(folder)
     image_paths = [p for p in paths if pathlib.Path(p).suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp')]
     def image(p):
@@ -579,6 +612,7 @@ def report_html(folder):
     content = f"""
 <div class="summary"><h1>테스트 결과 보고서</h1><p><span class="badge">{status_label(status)}</span> 테스트 {len(tests)}건</p><div class="meta"><span>시작 {esc(when)}</span><span>소요 {esc(duration)}</span><span>브라우저 {esc(meta.get('browser'))}</span><span>실행 ID {esc(folder.name)}</span></div>{error}</div>
 {context_section}
+{verification_section}
 <section class="card"><h2>테스트 결과</h2><ul>{test_rows}</ul></section>
 <section class="card"><h2>실행 단계</h2><ul>{step_rows}</ul></section>
 {trace_section}
@@ -678,7 +712,9 @@ class Handler(BaseHTTPRequestHandler):
                 run = read_json(folder / 'run.json', {})
                 if run.get('status') == 'running' and folder.name != ACTIVE:
                     run['status'] = 'interrupted'
-                return self.send(200, {'run': run, 'events': events(folder), 'artifacts': artifacts(folder)})
+                records = events(folder)
+                return self.send(200, {'run': run, 'events': [e for e in records if e.get('type') != 'check_end'],
+                                       'verification': verification_results(records), 'artifacts': artifacts(folder)})
             except ValueError as e:
                 return self.send(404, {'error': str(e)})
         if u.path in ('/api/report', '/api/log'):

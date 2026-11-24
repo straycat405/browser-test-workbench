@@ -72,6 +72,10 @@ class WorkbenchTest(unittest.TestCase):
         data = self.wait_for_result(rid)
         self.assertEqual(data['run']['status'], 'passed', data)
         self.assertTrue(any(e['type'] == 'step_end' for e in data['events']))
+        verification = data['verification']
+        self.assertEqual((verification['passed'], verification['failed']), (2, 0))
+        self.assertEqual([check['title'] for check in verification['checks']],
+                         ['페이지 제목에 Example Domain이 표시된다', '본문 제목이 Example Domain과 일치한다'])
         self.assertTrue(any(a.endswith('.png') for a in data['artifacts']))
         self.assertTrue(app.make_report(app.run_dir(rid)).startswith('# 브라우저 테스트 결과'))
         self.assertIn('<img ', app.report_html(app.run_dir(rid)))
@@ -82,7 +86,10 @@ class WorkbenchTest(unittest.TestCase):
         cfg.update(obsidian_enabled=True, obsidian_dir=str(vault))
         self.request('/api/settings', cfg)
         exported = pathlib.Path(self.request('/api/export', {'id': rid})['path'])
-        self.assertIn('## 실행 조건', (exported / 'report.md').read_text(encoding='utf-8'))
+        report = (exported / 'report.md').read_text(encoding='utf-8')
+        self.assertIn('## 실행 조건', report)
+        self.assertIn('## 검증 항목', report)
+        self.assertIn('통과 2건 · 실패 0건', report)
         self.assertTrue(list(exported.rglob('*.png')))
         with self.assertRaises(ValueError):
             app.run_dir('../settings.json')
@@ -115,6 +122,7 @@ class WorkbenchTest(unittest.TestCase):
         self.assertTrue(any(r.get('status') == 'interrupted' for r in app.history()))
         detail = self.request('/api/run?id=' + imported['id'])
         self.assertEqual(imported['status'], 'passed')
+        self.assertEqual(detail['verification'], {'passed': 0, 'failed': 0, 'checks': []})
         self.assertTrue(any('화면 조회' in e.get('title', '') for e in detail['events']))
         self.assertIn('artifacts/capture.png', detail['artifacts'])
         self.assertIn('원본 보고서', app.report_html(app.run_dir(imported['id'])))
@@ -132,12 +140,15 @@ class WorkbenchTest(unittest.TestCase):
         project = app.DATA / 'project'
         project.mkdir()
         (project / 'playwright.config.cjs').write_text(
-            "module.exports = {testDir: '.', use: {baseURL: 'https://example.invalid/fixture?key=fake-value'}};",
+            "module.exports = {testDir: '.', retries: 1, use: {baseURL: 'https://example.invalid/fixture?key=fake-value'}};",
             encoding='utf-8')
         (project / 'config.spec.js').write_text(
             "const {test,expect}=require('@playwright/test'); "
             "test('설정', async ({baseURL}) => { await test.step('주소 확인', async () => "
-            "expect(baseURL).toBe('https://example.invalid/fixture?key=fake-value')); });", encoding='utf-8')
+            "expect(baseURL, '기준 URL이 설정과 같다').toBe('https://example.invalid/fixture?key=fake-value')); }); "
+            "test('재시도', async ({}, info) => { expect(info.retry, '재시도 번호가 맞다').toBe(1); "
+            "await expect(async () => { expect(1, '내부 검사').toBe(1); }, '묶음 조건이 통과한다').toPass(); });",
+            encoding='utf-8')
         cfg = {'test_dir': str(project), 'browser': 'chromium', 'headless': True,
                'obsidian_enabled': False, 'obsidian_dir': '',
                'project_config': str(project / 'playwright.config.cjs')}
@@ -151,6 +162,10 @@ class WorkbenchTest(unittest.TestCase):
         self.assertEqual(data['run']['browser'], '프로젝트 설정')
         self.assertEqual(data['run']['context'], {'mode': 'project', 'git': checkout})
         self.assertTrue(any(event.get('title') == '주소 확인' for event in data['events']))
+        verification = data['verification']
+        self.assertEqual((verification['passed'], verification['failed']), (3, 0), data)
+        self.assertCountEqual([(check['title'], check['retry']) for check in verification['checks']],
+                              [('기준 URL이 설정과 같다', 0), ('재시도 번호가 맞다', 1), ('묶음 조건이 통과한다', 1)])
         for report in (app.make_report(app.run_dir(rid)), app.report_html(app.run_dir(rid))):
             self.assertIn('fixture-branch', report)
             self.assertIn('변경 있음', report)
@@ -164,13 +179,18 @@ class WorkbenchTest(unittest.TestCase):
             "const {test, expect} = require('@playwright/test'); "
             "test('실패 예제', async ({page}) => { "
             "await page.goto('data:text/html,<h1>Actual</h1>'); "
-            "expect(await page.locator('h1').textContent()).toBe('Expected'); });",
+            "expect(await page.locator('h1').textContent(), '본문 제목이 기대값과 일치한다').toBe('Expected'); });",
             encoding='utf-8')
         self.request('/api/settings', {'test_dir': str(folder), 'browser': 'chromium', 'headless': True,
                                        'obsidian_enabled': False, 'obsidian_dir': ''})
         rid = self.request('/api/start', {})['id']
         data = self.wait_for_result(rid)
         self.assertEqual(data['run']['status'], 'failed', data)
+        self.assertEqual(data['verification']['failed'], 1)
+        check = data['verification']['checks'][0]
+        self.assertEqual(check['title'], '본문 제목이 기대값과 일치한다')
+        self.assertIn('Expected', check['error'])
+        self.assertIn('Actual', check['error'])
         traces = [path for path in data['artifacts'] if path.endswith('/trace.zip')]
         self.assertEqual(len(traces), 1, data)
         query = urlencode({'id': rid, 'path': traces[0]})
