@@ -16,7 +16,7 @@ import time
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 if os.name == 'nt':
@@ -183,6 +183,29 @@ def artifacts(folder):
             if p.is_file() and p.resolve().is_relative_to(output.resolve())]
 
 
+def git_checkout(directory):
+    git = shutil.which('git')
+    if not git:
+        return None
+
+    def read(*args):
+        try:
+            result = subprocess.run(
+                [git, '-C', str(directory), '--no-optional-locks', '-c', 'core.fsmonitor=false', *args],
+                capture_output=True, encoding='utf-8', errors='replace', timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    commit = read('rev-parse', '--verify', 'HEAD')
+    if not commit:
+        return None
+    branch = read('symbolic-ref', '--quiet', '--short', 'HEAD')
+    changes = read('status', '--porcelain', '--untracked-files=normal')
+    return {'commit': commit, 'branch': branch, 'dirty': None if changes is None else bool(changes)}
+
+
 def finish_run(rid, config):
     global ACTIVE, ACTIVE_PROCESS, STOP_REQUESTED
     folder = RUNS / rid
@@ -212,6 +235,8 @@ def finish_run(rid, config):
         else:
             command = [node, str(cli), 'test', '--config', str(ROOT / 'app' / 'playwright.config.cjs')]
             cwd = ROOT
+        git_dir = cwd if project_config else pathlib.Path(config['test_dir'])
+        meta['context']['git'] = git_checkout(git_dir)
         with (folder / 'console.txt').open('w', encoding='utf-8') as output:
             with LOCK:
                 if STOP_REQUESTED:
@@ -286,17 +311,19 @@ def start_run(*, example=False):
         config = settings()
         if not config['setup_complete']:
             raise ValueError('먼저 초기 설정을 완료하세요.')
-        validate_settings(config)
         if example:
             config = {**config, 'test_dir': str(ROOT / 'examples'), 'project_config': ''}
+        config = validate_settings(config)
         if not config.get('project_config') and not test_files(config['test_dir']):
             raise ValueError('테스트 파일이 없습니다. 파일을 저장한 뒤 실행하세요.')
         rid = uuid.uuid4().hex
         folder = RUNS / rid
         folder.mkdir(parents=True)
+        mode = 'example' if example else 'project' if config['project_config'] else 'folder'
         write_json(folder / 'run.json', {'id': rid, 'status': 'running', 'started_at': time.time(),
                                         'test_dir': config.get('project_config') or config['test_dir'],
-                                        'browser': '프로젝트 설정' if config.get('project_config') else config['browser']})
+                                        'browser': '프로젝트 설정' if config.get('project_config') else config['browser'],
+                                        'context': {'mode': mode}})
         ACTIVE = rid
         STOP_REQUESTED = False
         threading.Thread(target=finish_run, args=(rid, config), daemon=True).start()
@@ -417,16 +444,61 @@ def history():
     return sorted(result, key=lambda x: x.get('started_at', 0), reverse=True)
 
 
+def context_fields(meta, records):
+    context = meta.get('context')
+    if not context:
+        return []
+    mode = context['mode']
+    mode_label = {'example': '예제', 'project': '프로젝트 설정', 'folder': '폴더 테스트'}[mode]
+    fields = [
+        ('실행 방식', mode_label),
+        ('설정 파일' if mode == 'project' else '테스트 폴더', meta['test_dir']),
+    ]
+    git = context.get('git')
+    if git:
+        fields.extend([
+            ('Git 커밋', git['commit']),
+            ('Git 브랜치', git['branch'] or '분리된 HEAD'),
+            ('작업 트리', {True: '변경 있음', False: '변경 없음', None: '확인 불가'}[git['dirty']]),
+        ])
+    for record in records:
+        if record.get('type') != 'begin':
+            continue
+        for project in record.get('projects', []):
+            details = ' · '.join(filter(None, (project['name'], project['browser'], project['origin'])))
+            fields.append(('Playwright 설정', details))
+        break
+    return fields
+
+
+def trace_paths(paths):
+    return [path for path in paths if pathlib.PurePosixPath(path).name == 'trace.zip']
+
+
 def make_report(folder):
     meta = read_json(folder / 'run.json', {})
+    records = events(folder)
+    paths = artifacts(folder)
     report = ['# 브라우저 테스트 결과', '', '- 실행 ID: ' + folder.name,
               '- 상태: ' + str(meta.get('status', '')), '']
-    for e in events(folder):
+    fields = context_fields(meta, records)
+    if fields:
+        report.extend(['## 실행 조건', ''])
+        for label, value in fields:
+            value = html.escape(' '.join(value.splitlines())).replace('[', '&#91;')
+            report.append(f'- {label}: {value}')
+        report.append('')
+    for e in records:
         if e.get('type') == 'test_end':
             report.extend(['## ' + e.get('title', ''), '', '- 상태: ' + e.get('status', ''), '', e.get('error', ''), ''])
-    for rel in artifacts(folder):
+    for rel in paths:
         if pathlib.Path(rel).suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp'):
             report.append('![](' + rel.replace(' ', '%20') + ')')
+    traces = trace_paths(paths)
+    if traces:
+        report.extend(['', '## Playwright 트레이스', ''])
+        for number, rel in enumerate(traces, 1):
+            report.append(f'- [트레이스 {number} 다운로드]({quote(rel)})')
     return '\n'.join(report)
 
 
@@ -479,11 +551,21 @@ def report_html(folder):
     step_rows = ''.join('<li><span class="mark">' + ('✗' if e.get('error') else '✓') + '</span> ' +
                         esc(e.get('title')) + ('<pre class="error">' + esc(e['error']) + '</pre>' if e.get('error') else '') + '</li>'
                         for e in steps) or '<li class="muted">기록된 단계가 없습니다.</li>'
-    image_paths = [p for p in artifacts(folder) if pathlib.Path(p).suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp')]
+    paths = artifacts(folder)
+    image_paths = [p for p in paths if pathlib.Path(p).suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp')]
     def image(p):
         url = '/api/file?' + urlencode({'id': folder.name, 'path': p})
         return '<figure><button type="button" class="preview-trigger" aria-label="' + esc(pathlib.PurePosixPath(p).name) + ' 확대"><img src="' + esc(url) + '" alt="' + esc(pathlib.PurePosixPath(p).name) + '"></button><figcaption>' + esc(pathlib.PurePosixPath(p).name) + '</figcaption></figure>'
     captures = ''.join(image(p) for p in image_paths) or '<p class="muted">저장된 캡처가 없습니다.</p>'
+    fields = context_fields(meta, evs)
+    context_rows = ''.join(f'<li><strong>{esc(label)}</strong> {esc(value)}</li>' for label, value in fields)
+    context_section = f'<section class="card"><h2>실행 조건</h2><ul>{context_rows}</ul></section>' if fields else ''
+    traces = []
+    for number, rel in enumerate(trace_paths(paths), 1):
+        url = esc('/api/file?' + urlencode({'id': folder.name, 'path': rel}))
+        traces.append(f'<li><a href="{url}" download>트레이스 {number} 다운로드</a></li>')
+    trace_section = ('<section class="card"><h2>Playwright 트레이스</h2><ul>' +
+                     ''.join(traces) + '</ul></section>') if traces else ''
     error = '<pre class="error">' + esc(meta['error']) + '</pre>' if meta.get('error') else ''
     source_report = (folder / 'artifacts' / 'report.md').resolve()
     original = ''
@@ -496,8 +578,10 @@ def report_html(folder):
         report_scripts = '<script type="module" src="/imported-report.js"></script>'
     content = f"""
 <div class="summary"><h1>테스트 결과 보고서</h1><p><span class="badge">{status_label(status)}</span> 테스트 {len(tests)}건</p><div class="meta"><span>시작 {esc(when)}</span><span>소요 {esc(duration)}</span><span>브라우저 {esc(meta.get('browser'))}</span><span>실행 ID {esc(folder.name)}</span></div>{error}</div>
+{context_section}
 <section class="card"><h2>테스트 결과</h2><ul>{test_rows}</ul></section>
 <section class="card"><h2>실행 단계</h2><ul>{step_rows}</ul></section>
+{trace_section}
 <section class="card"><h2>캡처 {len(image_paths)}장</h2><div class="gallery">{captures}</div></section>
 {original}
 """
@@ -617,7 +701,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('파일을 찾을 수 없습니다.')
                 if rel == 'artifacts/report.md' and read_json(folder / 'run.json', {}).get('source_type') == 'cli_history':
                     return self.send(200, report_html(folder), 'text/html; charset=utf-8')
-                mime = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8'}.get(p.suffix.lower(), 'application/octet-stream')
+                mime = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.zip': 'application/zip'}.get(p.suffix.lower(), 'application/octet-stream')
                 return self.send(200, p.read_bytes(), mime)
             except (ValueError, OSError):
                 return self.send(404, {'error': '파일을 찾을 수 없습니다.'})

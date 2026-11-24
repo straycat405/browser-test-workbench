@@ -10,6 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from urllib.parse import urlencode
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -44,6 +45,15 @@ class WorkbenchTest(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(self.base + path, data=body, headers=headers)) as res:
             return json.load(res)
 
+    def wait_for_result(self, rid):
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            data = self.request('/api/run?id=' + rid)
+            if data['run']['status'] != 'running':
+                return data
+            time.sleep(.2)
+        self.fail('테스트 실행이 제한 시간 안에 끝나지 않았습니다.')
+
     def test_config_security_and_real_run(self):
         cfg = {'test_dir': str(ROOT / 'examples'), 'browser': 'chromium', 'headless': True,
                'obsidian_enabled': False, 'obsidian_dir': ''}
@@ -59,12 +69,7 @@ class WorkbenchTest(unittest.TestCase):
         self.assertFalse(self.request('/api/state')['settings']['setup_complete'])
         self.assertTrue(self.request('/api/settings', cfg)['ok'])
         rid = self.request('/api/start', {})['id']
-        deadline = time.monotonic() + 45
-        while time.monotonic() < deadline:
-            data = self.request('/api/run?id=' + rid)
-            if data['run']['status'] != 'running':
-                break
-            time.sleep(.2)
+        data = self.wait_for_result(rid)
         self.assertEqual(data['run']['status'], 'passed', data)
         self.assertTrue(any(e['type'] == 'step_end' for e in data['events']))
         self.assertTrue(any(a.endswith('.png') for a in data['artifacts']))
@@ -77,7 +82,7 @@ class WorkbenchTest(unittest.TestCase):
         cfg.update(obsidian_enabled=True, obsidian_dir=str(vault))
         self.request('/api/settings', cfg)
         exported = pathlib.Path(self.request('/api/export', {'id': rid})['path'])
-        self.assertTrue((exported / 'report.md').is_file())
+        self.assertIn('## 실행 조건', (exported / 'report.md').read_text(encoding='utf-8'))
         self.assertTrue(list(exported.rglob('*.png')))
         with self.assertRaises(ValueError):
             app.run_dir('../settings.json')
@@ -127,25 +132,53 @@ class WorkbenchTest(unittest.TestCase):
         project = app.DATA / 'project'
         project.mkdir()
         (project / 'playwright.config.cjs').write_text(
-            "module.exports = {testDir: '.', use: {baseURL: 'http://example.invalid'}};", encoding='utf-8')
+            "module.exports = {testDir: '.', use: {baseURL: 'https://example.invalid/fixture?key=fake-value'}};",
+            encoding='utf-8')
         (project / 'config.spec.js').write_text(
             "const {test,expect}=require('@playwright/test'); "
             "test('설정', async ({baseURL}) => { await test.step('주소 확인', async () => "
-            "expect(baseURL).toBe('http://example.invalid')); });", encoding='utf-8')
+            "expect(baseURL).toBe('https://example.invalid/fixture?key=fake-value')); });", encoding='utf-8')
         cfg = {'test_dir': str(project), 'browser': 'chromium', 'headless': True,
                'obsidian_enabled': False, 'obsidian_dir': '',
                'project_config': str(project / 'playwright.config.cjs')}
         self.request('/api/settings', cfg)
-        rid = self.request('/api/start', {})['id']
-        deadline = time.monotonic() + 45
-        while time.monotonic() < deadline:
-            data = self.request('/api/run?id=' + rid)
-            if data['run']['status'] != 'running':
-                break
-            time.sleep(.2)
+        checkout = {'commit': 'a' * 40, 'branch': 'fixture-branch', 'dirty': True}
+        with mock.patch.object(app, 'git_checkout', return_value=checkout) as git_checkout:
+            rid = self.request('/api/start', {})['id']
+            data = self.wait_for_result(rid)
+        git_checkout.assert_called_once_with(project.resolve())
         self.assertEqual(data['run']['status'], 'passed', data)
         self.assertEqual(data['run']['browser'], '프로젝트 설정')
+        self.assertEqual(data['run']['context'], {'mode': 'project', 'git': checkout})
         self.assertTrue(any(event.get('title') == '주소 확인' for event in data['events']))
+        for report in (app.make_report(app.run_dir(rid)), app.report_html(app.run_dir(rid))):
+            self.assertIn('fixture-branch', report)
+            self.assertIn('변경 있음', report)
+            self.assertIn('https://example.invalid', report)
+            self.assertNotIn('fake-value', report)
+
+    def test_failed_run_exposes_playwright_trace(self):
+        folder = app.DATA / 'failed-test'
+        folder.mkdir()
+        (folder / 'failed.spec.js').write_text(
+            "const {test, expect} = require('@playwright/test'); "
+            "test('실패 예제', async ({page}) => { "
+            "await page.goto('data:text/html,<h1>Actual</h1>'); "
+            "expect(await page.locator('h1').textContent()).toBe('Expected'); });",
+            encoding='utf-8')
+        self.request('/api/settings', {'test_dir': str(folder), 'browser': 'chromium', 'headless': True,
+                                       'obsidian_enabled': False, 'obsidian_dir': ''})
+        rid = self.request('/api/start', {})['id']
+        data = self.wait_for_result(rid)
+        self.assertEqual(data['run']['status'], 'failed', data)
+        traces = [path for path in data['artifacts'] if path.endswith('/trace.zip')]
+        self.assertEqual(len(traces), 1, data)
+        query = urlencode({'id': rid, 'path': traces[0]})
+        self.assertIn('트레이스 1 다운로드', app.make_report(app.run_dir(rid)))
+        self.assertIn(query.replace('&', '&amp;'), app.report_html(app.run_dir(rid)))
+        with urllib.request.urlopen(self.base + '/api/file?' + query) as response:
+            self.assertEqual(response.headers.get_content_type(), 'application/zip')
+            self.assertEqual(response.read(4), b'PK\x03\x04')
 
     def test_stop_running_browser(self):
         folder = app.DATA / 'slow-test'
