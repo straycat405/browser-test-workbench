@@ -17,16 +17,29 @@
 .guide-steps{margin:12px 0;padding-inline-start:24px}.guide-steps li+li{margin-top:8px}
 .copy-field{font:13px/1.5 ui-monospace,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px;width:100%}
 textarea.copy-field{resize:vertical}.guide-actions{margin-top:12px}
-@media(max-width:560px){header{flex-wrap:wrap;gap:8px}.setup-choices{grid-template-columns:1fr}}
+.dialog-title{justify-content:space-between;margin-bottom:12px}.dialog-title h2{margin:0}
+header button{white-space:nowrap}
+@media(max-width:800px){header{flex-wrap:wrap;gap:8px}}
+@media(max-width:560px){.setup-choices{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1>브라우저 테스트 작업대</h1><span class="sub" id="connection">연결 중</span><span class="spacer"></span><button id="aiGuideButton">AI 테스트 안내</button><button id="importButton">기존 기록 가져오기</button><button id="settingsButton">설정</button></header>
+<header>
+  <h1>브라우저 테스트 작업대</h1><span class="sub" id="connection">연결 중</span><span class="spacer"></span>
+  <div class="row">
+    <button id="aiGuideButton" type="button">AI 테스트 안내</button>
+    <button id="helpButton" type="button" aria-haspopup="dialog">도움말</button>
+  </div>
+  <button id="importButton">기존 기록 가져오기</button><button id="settingsButton">설정</button>
+</header>
 <main>
 <section class="card"><div class="row"><h2 style="margin:0">테스트 실행</h2><span class="spacer"></span><button class="primary" id="start" disabled>테스트 실행</button><button id="stop" type="button" hidden>실행 중단</button></div><p class="sub" id="configSummary"></p><p id="testAvailability" role="status"></p><button id="runExample" type="button">예제 실행</button><div id="dependencies" class="notice" hidden></div><div id="current" class="empty">실행 목록에서 기록을 선택하거나 테스트를 실행하세요.</div></section>
 <aside class="card"><h2>테스트 캡처</h2><div id="gallery" class="empty">선택한 실행의 캡처가 여기에 표시됩니다.</div></aside>
 <section class="card full"><div class="row"><h2 style="margin:0">실행 기록</h2><span id="count" class="sub"></span><input id="historySearch" type="search" placeholder="이름이나 폴더 검색" aria-label="실행 기록 검색"><select id="historyStatus" aria-label="상태 필터"><option value="">전체 상태</option><option value="passed">성공</option><option value="failed">실패</option><option value="interrupted">중단</option></select></div><div class="scroll"><table><thead><tr><th>시작</th><th>테스트 폴더</th><th>브라우저</th><th>상태</th><th>소요</th></tr></thead><tbody id="runs"></tbody></table></div><div class="pages"><span id="pageInfo" class="sub"></span><button id="prev">이전</button><button id="next">다음</button></div></section>
 </main>
 <dialog id="settings" class="dialog" aria-labelledby="settingsTitle">
-  <h2 id="settingsTitle">처음 시작하기</h2>
+  <div class="row dialog-title">
+    <h2 id="settingsTitle">처음 시작하기</h2>
+    <button id="setupHelpButton" type="button" aria-haspopup="dialog">도움말</button>
+  </div>
   <fieldset id="setupChoices" class="setup-choices" hidden>
     <legend>어떻게 시작할까요?</legend>
     <button type="button" id="existingMode" aria-pressed="false">
@@ -67,6 +80,28 @@ textarea.copy-field{resize:vertical}.guide-actions{margin-top:12px}
       <button id="saveSettings" class="primary" type="submit">설정 저장</button>
       <button id="cancelSettings" type="button">취소</button>
     </div>
+  </form>
+</dialog>
+<dialog id="helpDialog" class="dialog" aria-labelledby="helpTitle">
+  <h2 id="helpTitle" tabindex="-1" autofocus>작업대 도움말</h2>
+  <h3>왜 만들었나요?</h3>
+  <p>웹 화면을 수정할 때마다 같은 클릭과 입력을 반복하고 결과를 따로 기록하는 수고를 줄이려고 만들었습니다. 테스트 파일에 조작 순서와 기대 결과를 적어 두면 작업대가 이 컴퓨터의 브라우저에서 실행합니다.</p>
+  <h3>어떻게 시작하나요?</h3>
+  <ol class="guide-steps">
+    <li><strong>예제 실행</strong>으로 샘플 웹페이지의 제목과 본문을 자동으로 확인해 보세요.</li>
+    <li><strong>실행 기록</strong>에서 방금 실행한 항목의 성공·실패를 확인하고 <strong>보고서</strong>에서 단계와 캡처를 봅니다.</li>
+    <li>내 화면을 테스트하려면 <strong>설정 → 폴더 선택</strong>에서 기존 Playwright 테스트 폴더를 고르세요. 새로 만들 때는 <strong>AI 테스트 안내</strong>에서 요청문과 파일 저장 방법을 확인하세요.</li>
+    <li>파일을 준비한 뒤 <strong>폴더 내 테스트 실행</strong>을 누릅니다.</li>
+  </ol>
+  <h3>무엇이 좋아지나요?</h3>
+  <ul class="guide-steps">
+    <li>화면을 수정한 뒤 같은 절차를 실행해 이전 결과와 비교할 수 있습니다.</li>
+    <li>실패한 단계와 캡처가 남아 원인을 찾거나 결과를 전달하기 쉽습니다.</li>
+  </ul>
+  <form method="dialog" class="row guide-actions">
+    <button id="helpRunExample" class="primary" type="button">예제 실행</button>
+    <button id="helpAiGuide" type="button">AI 테스트 안내 열기</button>
+    <button type="submit">닫기</button>
   </form>
 </dialog>
 <dialog id="aiGuide" class="dialog" aria-labelledby="aiGuideTitle">
@@ -117,6 +152,7 @@ function editSettings() {
   settingsRevision++;
   setupMode = null;
   $('settingsTitle').textContent = config.setup_complete ? '상세 설정' : '처음 시작하기';
+  $('setupHelpButton').hidden = config.setup_complete;
   $('setupChoices').hidden = config.setup_complete;
   $('settingsForm').hidden = !config.setup_complete;
   $('existingMode').setAttribute('aria-pressed', 'false');
@@ -165,6 +201,27 @@ function showAiGuide() {
   if (!$('aiGuide').open) $('aiGuide').showModal();
 }
 
+function openAiGuide() {
+  if (state.settings?.setup_complete) showAiGuide();
+  else if (state.settings) {
+    if (!$('settings').open) editSettings();
+    chooseSetup('ai');
+  }
+}
+
+function updateHelpActions() {
+  const ready = state.settings?.setup_complete;
+  $('helpRunExample').textContent = ready ? '예제 실행' : '예제 설정 열기';
+  $('helpRunExample').disabled = !state.settings || (ready && $('runExample').disabled);
+  $('helpAiGuide').textContent = ready ? 'AI 테스트 안내 열기' : 'AI 테스트 설정 열기';
+  $('helpAiGuide').disabled = !state.settings;
+}
+
+function showHelp() {
+  updateHelpActions();
+  $('helpDialog').showModal();
+}
+
 async function copyGuideField(field, success) {
   try {
     await navigator.clipboard.writeText(field.value);
@@ -178,12 +235,20 @@ async function copyGuideField(field, success) {
 
 $('existingMode').onclick = () => chooseSetup('existing');
 $('aiMode').onclick = () => chooseSetup('ai');
-$('aiGuideButton').onclick = () => {
-  if (state.settings?.setup_complete) showAiGuide();
-  else if (state.settings) {
-    editSettings();
-    chooseSetup('ai');
+$('aiGuideButton').onclick = openAiGuide;
+$('helpButton').onclick = $('setupHelpButton').onclick = showHelp;
+$('helpRunExample').onclick = () => {
+  $('helpDialog').close();
+  if (state.settings.setup_complete) startTest(true);
+  else {
+    if (!$('settings').open) editSettings();
+    chooseSetup('existing');
+    $('saveSettings').focus();
   }
+};
+$('helpAiGuide').onclick = () => {
+  $('helpDialog').close();
+  openAiGuide();
 };
 $('copyFolder').onclick = () => copyGuideField($('aiTestFolder'), '폴더 경로를 복사했습니다.');
 $('copyAiPrompt').onclick = () => copyGuideField($('aiPrompt'), '요청문을 복사했습니다.');
@@ -419,6 +484,6 @@ async function loadRun() {
     if (id === state.selected && revision === state.revision) $('current').textContent = error.message;
   }
 }
-async function refresh(){try{const d=await api('/api/state');state.settings=d.settings;state.folders=d.folders;state.runs=d.runs;state.active=d.active;$('connection').textContent='이 컴퓨터에서 실행 중';$('configSummary').textContent=`${d.settings.project_config ? '프로젝트 설정 · ' + d.settings.project_config : '다음 실행 폴더 · ' + d.settings.test_dir + ' · ' + d.settings.browser + ' · ' + (d.settings.headless ? '창 숨김' : '창 표시')}`;$('testAvailability').textContent=d.settings.project_config ? '프로젝트 설정에 지정된 테스트 전체를 실행합니다.' : d.test_file_count ? `테스트 파일 ${d.test_file_count}건 (이 폴더 전체 실행)` : '테스트 파일이 없습니다. 파일을 저장하거나 예제를 실행하세요.';$('start').textContent=`폴더 내 테스트 실행`;$('start').disabled=!!d.active||!d.settings.setup_complete||(!d.settings.project_config&&!d.test_file_count);$('runExample').disabled=!!d.active||!d.settings.setup_complete;$('stop').hidden=!d.active;$('stop').disabled=!!d.stopping;$('stop').textContent=d.stopping?'중단 중…':'실행 중단';const missing=[];if(!d.node)missing.push('Node.js');if(!d.playwright)missing.push('Playwright 패키지');$('dependencies').hidden=!missing.length;$('dependencies').textContent=missing.length?missing.join(', ')+' 설치가 필요합니다. README의 설치 방법을 확인하세요.':'';if(!state.loaded){state.loaded=true;if(!d.settings.setup_complete)editSettings()}if(!state.selected&&d.runs.length)state.selected=d.runs[0].id;table();if(state.selected)await loadRun()}catch(e){$('connection').textContent='서버 연결 끊김'}}
+async function refresh(){try{const d=await api('/api/state');state.settings=d.settings;state.folders=d.folders;state.runs=d.runs;state.active=d.active;$('connection').textContent='이 컴퓨터에서 실행 중';$('configSummary').textContent=`${d.settings.project_config ? '프로젝트 설정 · ' + d.settings.project_config : '다음 실행 폴더 · ' + d.settings.test_dir + ' · ' + d.settings.browser + ' · ' + (d.settings.headless ? '창 숨김' : '창 표시')}`;$('testAvailability').textContent=d.settings.project_config ? '프로젝트 설정에 지정된 테스트 전체를 실행합니다.' : d.test_file_count ? `테스트 파일 ${d.test_file_count}건 (이 폴더 전체 실행)` : '테스트 파일이 없습니다. 파일을 저장하거나 예제를 실행하세요.';$('start').textContent=`폴더 내 테스트 실행`;$('start').disabled=!!d.active||!d.settings.setup_complete||(!d.settings.project_config&&!d.test_file_count);$('runExample').disabled=!!d.active||!d.settings.setup_complete;updateHelpActions();$('stop').hidden=!d.active;$('stop').disabled=!!d.stopping;$('stop').textContent=d.stopping?'중단 중…':'실행 중단';const missing=[];if(!d.node)missing.push('Node.js');if(!d.playwright)missing.push('Playwright 패키지');$('dependencies').hidden=!missing.length;$('dependencies').textContent=missing.length?missing.join(', ')+' 설치가 필요합니다. README의 설치 방법을 확인하세요.':'';if(!state.loaded){state.loaded=true;if(!d.settings.setup_complete)editSettings()}if(!state.selected&&d.runs.length)state.selected=d.runs[0].id;table();if(state.selected)await loadRun()}catch(e){$('connection').textContent='서버 연결 끊김'}}
 refresh();setInterval(refresh,3000);
 </script><script src="/preview.js"></script></body></html>

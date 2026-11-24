@@ -10,7 +10,14 @@ const path = require('node:path');
     await page.waitForSelector('#settings[open]');
     const response = await page.request.get(new URL('/api/state', page.url()).href);
     const { folders } = await response.json();
-    await page.locator('#existingMode').click();
+    const help = page.getByRole('dialog', { name: '작업대 도움말' });
+    await page.locator('#setupHelpButton').click();
+    await help.getByRole('heading', { name: '왜 만들었나요?' }).waitFor();
+    await help.getByRole('heading', { name: '어떻게 시작하나요?' }).waitFor();
+    await help.getByRole('heading', { name: '무엇이 좋아지나요?' }).waitFor();
+    await help.getByRole('button', { name: '예제 설정 열기' }).click();
+    await help.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#existingMode').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#testDir').inputValue(), folders.examples);
     const selectedFolder = path.join(folders.personal, '한글 테스트');
     let pickerCalls = 0;
@@ -43,6 +50,34 @@ const path = require('node:path');
     await page.locator('#aiGuideButton').click();
     await page.waitForSelector('#aiGuide[open]');
     await page.locator('#closeAiGuide').click();
+    const headerHelp = page.locator('header #aiGuideButton + #helpButton');
+    const desktop = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 760 });
+    await headerHelp.click();
+    assert.equal(await help.evaluate(dialog => {
+      const { left, right } = dialog.getBoundingClientRect();
+      return left >= 0 && right <= window.innerWidth;
+    }), true);
+    await page.keyboard.press('Escape');
+    await help.waitFor({ state: 'hidden' });
+    assert.equal(await headerHelp.evaluate(button => button === document.activeElement), true);
+    await page.setViewportSize(desktop);
+    await headerHelp.click();
+    await help.getByRole('button', { name: 'AI 테스트 안내 열기' }).click();
+    await page.waitForSelector('#aiGuide[open]');
+    await page.locator('#closeAiGuide').click();
+    await headerHelp.click();
+    const [helpExampleResponse] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith('/api/start') && r.request().postDataJSON()?.example === true),
+      help.getByRole('button', { name: '예제 실행', exact: true }).click(),
+    ]);
+    assert.equal(helpExampleResponse.ok(), true);
+    const { id: helpExampleId } = await helpExampleResponse.json();
+    await page.waitForFunction(id => {
+      const row = document.querySelector('#runs tr.selected');
+      return row?.dataset.run === id && row.textContent.includes('성공');
+    }, helpExampleId, { timeout: 45000 });
+
     await fs.copyFile(path.join(folders.examples, 'example.spec.js'), path.join(folders.personal, 'first-test.spec.js'));
     const [startResponse] = await Promise.all([
       page.waitForResponse(r => r.url().endsWith('/api/start') && r.request().method() === 'POST'),
