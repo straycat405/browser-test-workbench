@@ -527,6 +527,56 @@ STATUS_LABELS = {'running': '실행 중', 'passed': '성공', 'failed': '실패'
                  'skipped': '건너뜀', 'timedOut': '시간 초과'}
 
 
+def make_handoff(folder):
+    meta = read_json(folder / 'run.json', {})
+    status = meta.get('status', 'unknown')
+    if status == 'running':
+        if folder.name == ACTIVE:
+            raise ValueError('실행이 끝난 뒤 인수인계를 열 수 있습니다.')
+        status = 'interrupted'
+
+    records = events(folder)
+    verification = verification_results(records)
+    started_at = meta.get('started_at')
+    when = time.strftime('%Y-%m-%d %H:%M:%S %z', time.localtime(started_at)) if started_at else ''
+    result = ' · '.join(filter(None, (STATUS_LABELS.get(status, '알 수 없음'), when)))
+    lines = ['# 브라우저 테스트 인수인계', '', '## 확인한 결과', '',
+             f'- **실행 상태** {result}']
+    if meta.get('test_dir'):
+        lines.append(f"- **실행 대상** {report_text(meta['test_dir'])}")
+    git = (meta.get('context') or {}).get('git')
+    if git:
+        branch = report_text(git['branch'] or '분리된 HEAD')
+        dirty = {True: '변경 있음', False: '변경 없음', None: '확인 불가'}[git['dirty']]
+        lines.append(f"- **Git** {branch} · `{git['commit']}` · 작업 트리 {dirty}")
+    if verification['checks']:
+        lines.append(f"- **검증 항목** 통과 {verification['passed']}건 · 실패 {verification['failed']}건")
+    failed_checks = [check['title'] for check in verification['checks'] if check['status'] == 'failed']
+    if failed_checks:
+        first = ' · '.join(report_text(title) for title in failed_checks[:3])
+        remaining = f' 외 {len(failed_checks) - 3}건' if len(failed_checks) > 3 else ''
+        lines.append(f'- **실패한 조건** {first}{remaining}')
+    elif status == 'failed':
+        failure = next((record for record in records if record.get('type') in ('step_end', 'test_end')
+                        and record.get('error') and record.get('title')), None)
+        if failure:
+            lines.append(f"- **실패 위치** {report_text(failure['title'])}")
+
+    address = f'http://127.0.0.1:{PORT}'
+    query = urlencode({'id': folder.name})
+    next_step = {
+        'passed': '다음 변경 후 같은 테스트를 실행해 이 보고서와 비교합니다.',
+        'failed': '보고서의 실패 상세와 실행 로그를 확인해 재현할 조건을 정합니다.',
+        'interrupted': '마지막 실행 단계를 확인하고 재실행 범위를 정합니다.',
+    }.get(status, '보고서와 실행 로그에서 확인한 범위를 점검합니다.')
+    lines.extend(['', '## 근거', '',
+                  f'- [보고서]({address}/api/report?{query})',
+                  f'- [실행 로그]({address}/api/log?{query})',
+                  f'- **기록 폴더** {report_text(str(folder))}',
+                  '', '## 다음 할 일', '', next_step, ''])
+    return '\n'.join(lines)
+
+
 def execution_log(folder, records):
     console = (folder / 'console.txt').resolve()
     if console.parent == folder.resolve() and console.is_file():
@@ -724,6 +774,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, render(folder), 'text/html; charset=utf-8')
             except ValueError as e:
                 return self.send(404, {'error': str(e)})
+        if u.path == '/api/handoff':
+            try:
+                folder = run_dir(parse_qs(u.query).get('id', [''])[0])
+            except ValueError as e:
+                return self.send(404, {'error': str(e)})
+            try:
+                return self.send(200, {'markdown': make_handoff(folder)})
+            except ValueError as e:
+                return self.send(409, {'error': str(e)})
         if u.path == '/api/file':
             try:
                 q = parse_qs(u.query)

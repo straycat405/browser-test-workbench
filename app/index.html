@@ -140,6 +140,17 @@ header button{white-space:nowrap}
     <span id="guideStatus" class="sub" role="status"></span>
   </div>
 </dialog>
+<dialog id="handoffDialog" class="dialog" aria-labelledby="handoffTitle">
+  <h2 id="handoffTitle">실행 인수인계</h2>
+  <p class="sub">이슈 번호나 다음 할 일을 덧붙인 뒤 Codex, Claude Code 또는 작업 노트에 붙여 넣으세요.</p>
+  <label for="handoffContent">인수인계 내용</label>
+  <textarea id="handoffContent" class="copy-field" rows="13" autofocus></textarea>
+  <form method="dialog" class="row guide-actions">
+    <button id="copyHandoff" class="primary" type="button">인수인계 복사</button>
+    <button type="submit">닫기</button>
+    <span id="handoffStatus" class="sub" role="status"></span>
+  </form>
+</dialog>
 <dialog id="importDialog" class="dialog"><h2>기존 기록 가져오기</h2><p class="sub">기존 테스트 도구의 폴더 또는 그 안의 out 폴더를 입력하세요. 원본은 그대로 두고 보고서와 캡처를 이 컴퓨터의 작업대 데이터 폴더로 복사합니다.</p><form id="importForm" class="form"><label>기존 폴더 경로<input id="importPath" type="text" required><span class="hint">result.json이 들어 있는 실행 폴더들의 상위 폴더입니다. 이미 가져온 실행은 건너뜁니다.</span></label><div id="importMessage" class="error" role="status"></div><div class="row"><button id="importSubmit" type="submit" class="primary">기록 가져오기</button><button id="importCancel" type="button">닫기</button></div></form></dialog>
 <script>
 const TOKEN='__TOKEN__', $=id=>document.getElementById(id), state={runs:[],selected:null,page:1,settings:null,loaded:false,revision:0,renderKey:null};
@@ -227,14 +238,28 @@ function showHelp() {
   $('helpDialog').showModal();
 }
 
-async function copyGuideField(field, success) {
+async function copyField(field, status, success) {
   try {
     await navigator.clipboard.writeText(field.value);
-    $('guideStatus').textContent = success;
+    status.textContent = success;
   } catch {
     field.focus();
     field.select();
-    $('guideStatus').textContent = '선택된 내용을 직접 복사하세요.';
+    status.textContent = '선택된 내용을 직접 복사하세요.';
+  }
+}
+
+async function openHandoff(id) {
+  const dialog = $('handoffDialog');
+  try {
+    const { markdown } = await api('/api/handoff?' + new URLSearchParams({ id }));
+    if (state.selected !== id || dialog.open) return;
+    $('handoffContent').value = markdown;
+    $('handoffStatus').textContent = '';
+    $('copyHandoff').disabled = false;
+    dialog.showModal();
+  } catch (error) {
+    if (state.selected === id) alert(error.message);
   }
 }
 
@@ -255,8 +280,13 @@ $('helpAiGuide').onclick = () => {
   $('helpDialog').close();
   openAiGuide();
 };
-$('copyFolder').onclick = () => copyGuideField($('aiTestFolder'), '폴더 경로를 복사했습니다.');
-$('copyAiPrompt').onclick = () => copyGuideField($('aiPrompt'), '요청문을 복사했습니다.');
+$('copyFolder').onclick = () => copyField($('aiTestFolder'), $('guideStatus'), '폴더 경로를 복사했습니다.');
+$('copyAiPrompt').onclick = () => copyField($('aiPrompt'), $('guideStatus'), '요청문을 복사했습니다.');
+$('copyHandoff').onclick = () => copyField($('handoffContent'), $('handoffStatus'), '인수인계를 복사했습니다.');
+$('handoffContent').oninput = () => {
+  $('copyHandoff').disabled = !$('handoffContent').value.trim();
+  $('handoffStatus').textContent = '';
+};
 $('closeAiGuide').onclick = () => $('aiGuide').close();
 $('switchToPersonal').onclick = () => {
   $('aiGuide').close();
@@ -457,7 +487,8 @@ async function loadRun() {
     ).join('');
     const query = new URLSearchParams({ id });
     const links = `<a href="/api/report?${query}" target="_blank">보고서</a> · <a href="/api/log?${query}" target="_blank">실행 로그</a>`;
-    const canExport = state.settings.obsidian_enabled && run.status !== 'running';
+    const finished = run.status !== 'running';
+    const canExport = state.settings.obsidian_enabled && finished;
     const title = `<h3>선택한 실행 결과</h3><p class="sub">${escapeHTML(run.test_dir)} · ${when(run.started_at)}</p>`;
     $('current').innerHTML = `
       <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
@@ -468,6 +499,7 @@ async function loadRun() {
         <span class="sub">${duration(run.started_at, run.ended_at)}</span>
         <span class="spacer"></span>
         ${links}
+        ${finished ? '<button id="handoffButton" type="button" aria-haspopup="dialog">인수인계</button>' : ''}
         ${canExport ? '<button id="export">Obsidian으로 내보내기</button>' : ''}
       </div>
       ${run.error ? `<p class="error">${escapeHTML(run.error)}</p>` : ''}
@@ -476,6 +508,7 @@ async function loadRun() {
       ${errors}
       <h3>실행 단계</h3>
       ${list || '<p class="sub">기록된 단계가 없습니다.</p>'}`;
+    if (finished) $('handoffButton').onclick = () => openHandoff(id);
     if (canExport) {
       $('export').onclick = async () => {
         try {

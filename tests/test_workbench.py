@@ -76,6 +76,12 @@ class WorkbenchTest(unittest.TestCase):
         self.assertEqual((verification['passed'], verification['failed']), (2, 0))
         self.assertEqual([check['title'] for check in verification['checks']],
                          ['페이지 제목에 Example Domain이 표시된다', '본문 제목이 Example Domain과 일치한다'])
+        handoff = self.request('/api/handoff?id=' + rid)['markdown']
+        self.assertIn('**실행 상태** 성공', handoff)
+        self.assertIn('통과 2건 · 실패 0건', handoff)
+        self.assertIn(self.base + '/api/report?id=' + rid, handoff)
+        self.assertIn(self.base + '/api/log?id=' + rid, handoff)
+        self.assertIn(str(app.run_dir(rid)), handoff)
         self.assertTrue(any(a.endswith('.png') for a in data['artifacts']))
         self.assertTrue(app.make_report(app.run_dir(rid)).startswith('# 브라우저 테스트 결과'))
         self.assertIn('<img ', app.report_html(app.run_dir(rid)))
@@ -123,6 +129,9 @@ class WorkbenchTest(unittest.TestCase):
         detail = self.request('/api/run?id=' + imported['id'])
         self.assertEqual(imported['status'], 'passed')
         self.assertEqual(detail['verification'], {'passed': 0, 'failed': 0, 'checks': []})
+        handoff = self.request('/api/handoff?id=' + imported['id'])['markdown']
+        self.assertIn('**실행 상태** 성공', handoff)
+        self.assertNotIn('검증 항목', handoff)
         self.assertTrue(any('화면 조회' in e.get('title', '') for e in detail['events']))
         self.assertIn('artifacts/capture.png', detail['artifacts'])
         self.assertIn('원본 보고서', app.report_html(app.run_dir(imported['id'])))
@@ -191,6 +200,9 @@ class WorkbenchTest(unittest.TestCase):
         self.assertEqual(check['title'], '본문 제목이 기대값과 일치한다')
         self.assertIn('Expected', check['error'])
         self.assertIn('Actual', check['error'])
+        handoff = self.request('/api/handoff?id=' + rid)['markdown']
+        self.assertIn('**실패한 조건** 본문 제목이 기대값과 일치한다', handoff)
+        self.assertNotIn('Received:', handoff)
         traces = [path for path in data['artifacts'] if path.endswith('/trace.zip')]
         self.assertEqual(len(traces), 1, data)
         query = urlencode({'id': rid, 'path': traces[0]})
@@ -222,6 +234,9 @@ class WorkbenchTest(unittest.TestCase):
                 self.fail('브라우저 대기 단계가 시작되지 않았습니다.')
             with self.assertRaises(urllib.error.HTTPError):
                 self.request('/api/stop', {'id': '0' * 32})
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.request('/api/handoff?id=' + rid)
+            self.assertEqual(error.exception.code, 409)
             self.assertTrue(self.request('/api/stop', {'id': rid})['ok'])
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
@@ -231,6 +246,7 @@ class WorkbenchTest(unittest.TestCase):
                 time.sleep(.2)
             self.assertEqual(data['run']['status'], 'interrupted', data)
             self.assertIsNone(self.request('/api/state')['active'])
+            self.assertIn('**실행 상태** 중단', self.request('/api/handoff?id=' + rid)['markdown'])
         finally:
             if app.ACTIVE == rid and not app.STOP_REQUESTED:
                 app.stop_run(rid)
