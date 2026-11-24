@@ -72,6 +72,9 @@ class WorkbenchTest(unittest.TestCase):
         data = self.wait_for_result(rid)
         self.assertEqual(data['run']['status'], 'passed', data)
         self.assertTrue(any(e['type'] == 'step_end' for e in data['events']))
+        waits = [event for event in data['events'] if event['type'] == 'step_end' and event['title'] == 'API 응답 대기']
+        self.assertEqual(len(waits), 1, [event.get('title') for event in data['events']])
+        self.assertGreaterEqual(waits[0]['duration'], 0)
         verification = data['verification']
         self.assertEqual((verification['passed'], verification['failed']), (2, 0))
         self.assertEqual([check['title'] for check in verification['checks']],
@@ -96,6 +99,7 @@ class WorkbenchTest(unittest.TestCase):
         self.assertIn('## 실행 조건', report)
         self.assertIn('## 검증 항목', report)
         self.assertIn('통과 2건 · 실패 0건', report)
+        self.assertRegex(report, r'API 응답 대기 · [\d,]+ ms')
         self.assertTrue(list(exported.rglob('*.png')))
         with self.assertRaises(ValueError):
             app.run_dir('../settings.json')
