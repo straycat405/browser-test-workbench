@@ -10,7 +10,14 @@ const path = require('node:path');
     await page.waitForSelector('#settings[open]');
     const response = await page.request.get(new URL('/api/state', page.url()).href);
     const { folders } = await response.json();
-    await page.locator('#existingMode').click();
+    const help = page.getByRole('dialog', { name: '작업대 도움말' });
+    await page.locator('#setupHelpButton').click();
+    await help.getByRole('heading', { name: '왜 만들었나요?' }).waitFor();
+    await help.getByRole('heading', { name: '어떻게 시작하나요?' }).waitFor();
+    await help.getByRole('heading', { name: '무엇이 좋아지나요?' }).waitFor();
+    await help.getByRole('button', { name: '예제 설정 열기' }).click();
+    await help.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#existingMode').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#testDir').inputValue(), folders.examples);
     const selectedFolder = path.join(folders.personal, '한글 테스트');
     let pickerCalls = 0;
@@ -43,6 +50,34 @@ const path = require('node:path');
     await page.locator('#aiGuideButton').click();
     await page.waitForSelector('#aiGuide[open]');
     await page.locator('#closeAiGuide').click();
+    const headerHelp = page.locator('header #aiGuideButton + #helpButton');
+    const desktop = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 760 });
+    await headerHelp.click();
+    assert.equal(await help.evaluate(dialog => {
+      const { left, right } = dialog.getBoundingClientRect();
+      return left >= 0 && right <= window.innerWidth;
+    }), true);
+    await page.keyboard.press('Escape');
+    await help.waitFor({ state: 'hidden' });
+    assert.equal(await headerHelp.evaluate(button => button === document.activeElement), true);
+    await page.setViewportSize(desktop);
+    await headerHelp.click();
+    await help.getByRole('button', { name: 'AI 테스트 안내 열기' }).click();
+    await page.waitForSelector('#aiGuide[open]');
+    await page.locator('#closeAiGuide').click();
+    await headerHelp.click();
+    const [helpExampleResponse] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith('/api/start') && r.request().postDataJSON()?.example === true),
+      help.getByRole('button', { name: '예제 실행', exact: true }).click(),
+    ]);
+    assert.equal(helpExampleResponse.ok(), true);
+    const { id: helpExampleId } = await helpExampleResponse.json();
+    await page.waitForFunction(id => {
+      const row = document.querySelector('#runs tr.selected');
+      return row?.dataset.run === id && row.textContent.includes('성공');
+    }, helpExampleId, { timeout: 45000 });
+
     await fs.copyFile(path.join(folders.examples, 'example.spec.js'), path.join(folders.personal, 'first-test.spec.js'));
     const [startResponse] = await Promise.all([
       page.waitForResponse(r => r.url().endsWith('/api/start') && r.request().method() === 'POST'),
@@ -50,6 +85,9 @@ const path = require('node:path');
     ]);
     const { id } = await startResponse.json();
     await page.waitForFunction(id => document.querySelector('#runs tr.selected')?.dataset.run === id && document.querySelector('#runs tr.selected')?.textContent.includes('성공') && document.querySelector('#current a[href^="/api/report"]')?.href.includes(id), id, { timeout: 45000 });
+    const verification = page.locator('#verification-results');
+    await verification.getByText('통과 2건 · 실패 0건', { exact: true }).waitFor();
+    await verification.getByText('본문 제목이 Example Domain과 일치한다', { exact: true }).waitFor();
     const historyButton = page.locator('#runs tr.selected button[data-id]');
     await historyButton.focus();
     await page.keyboard.press('Enter');
@@ -71,6 +109,7 @@ const path = require('node:path');
     ]);
     await report.waitForLoadState();
     if (await report.locator('h1').textContent() !== '테스트 결과 보고서') throw Error('보고서 제목이 표시되지 않습니다.');
+    await report.locator('#verification-results').getByText('통과 2건 · 실패 0건', { exact: true }).waitFor();
     if (await report.locator('#execution-log').count()) throw Error('보고서에 로그 화면이 함께 표시됩니다.');
     const image = report.locator('img').first();
     await image.waitFor({timeout:5000}).catch(async e => { console.error('보고서 URL:', report.url()); console.error('보고서 본문:', await report.locator('body').innerText()); throw e; });
@@ -116,7 +155,7 @@ const path = require('node:path');
     assert.equal(await page.locator('#stop').isHidden(), true);
     await fs.unlink(path.join(folders.personal, 'slow.spec.js'));
     await fs.writeFile(path.join(folders.personal, 'fail.spec.js'),
-      "const {test,expect}=require('@playwright/test'); test('실패 시험', async () => { await test.step('값 확인', async () => expect(1).toBe(2)); });");
+      "const {test,expect}=require('@playwright/test'); test('실패 시험', async () => { await test.step('값 확인', async () => expect(1, '검사값이 2다').toBe(2)); });");
     const [failedResponse] = await Promise.all([
       page.waitForResponse(r => r.url().endsWith('/api/start') && r.request().method() === 'POST'),
       page.locator('#start').click(),
@@ -128,6 +167,23 @@ const path = require('node:path');
     }, failedRun, { timeout: 30000 });
     await page.getByText('실패 위치 · 값 확인').waitFor();
     await page.getByText('오류 상세와 캡처를 확인한 뒤 실패한 조건을 살펴보세요.').waitFor();
+    await verification.getByText('통과 2건 · 실패 1건', { exact: true }).waitFor();
+    await verification.getByText('검사값이 2다', { exact: true }).waitFor();
+    await verification.getByText('실패 상세', { exact: true }).click();
+    assert.match(await verification.locator('pre').innerText(), /Expected:\s*2/);
+    await page.getByRole('button', { name: '인수인계', exact: true }).click();
+    const handoff = page.getByRole('dialog', { name: '실행 인수인계' });
+    const handoffContent = handoff.getByRole('textbox', { name: '인수인계 내용' });
+    const handoffDraft = await handoffContent.inputValue();
+    assert.match(handoffDraft, /실패한 조건.*검사값이 2다/);
+    assert.ok(handoffDraft.includes('/api/report?id=' + failedRun));
+    await handoffContent.fill(handoffDraft + '\n- 작업 이슈 TEST-42');
+    await handoff.getByRole('button', { name: '인수인계 복사', exact: true }).click();
+    await handoff.getByText('인수인계를 복사했습니다.', { exact: true }).waitFor();
+    const handoffCopied = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(handoffCopied.replace(/\r\n/g, '\n'), handoffDraft + '\n- 작업 이슈 TEST-42');
+    await page.keyboard.press('Escape');
+    await handoff.waitFor({ state: 'hidden' });
     await page.locator('#importButton').click();
     await page.locator('#importPath').fill(process.env.BTW_IMPORT_DIR);
     await page.locator('#importSubmit').click();
