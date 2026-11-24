@@ -17,6 +17,8 @@
 .guide-steps{margin:12px 0;padding-inline-start:24px}.guide-steps li+li{margin-top:8px}
 .copy-field{font:13px/1.5 ui-monospace,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:9px;width:100%}
 textarea.copy-field{resize:vertical}.guide-actions{margin-top:12px}
+.button-link{display:inline-block;border:1px solid #2459c5;border-radius:8px;padding:8px 14px;text-decoration:none}
+.button-link:hover{border-color:var(--accent)}
 .dialog-title{justify-content:space-between;margin-bottom:12px}.dialog-title h2{margin:0}
 .verification-checks{list-style:none;margin:0;padding:0}
 .verification-checks li{padding:8px 0;overflow-wrap:anywhere}
@@ -37,7 +39,16 @@ header button{white-space:nowrap}
   <button id="importButton">기존 기록 가져오기</button><button id="settingsButton">설정</button>
 </header>
 <main>
-<section class="card"><div class="row"><h2 style="margin:0">테스트 실행</h2><span class="spacer"></span><button class="primary" id="start" disabled>테스트 실행</button><button id="stop" type="button" hidden>실행 중단</button></div><p class="sub" id="configSummary"></p><p id="testAvailability" role="status"></p><div class="row"><button id="runExample" type="button">예제 실행</button><button id="emptyFolderButton" type="button" hidden>테스트 폴더 선택</button></div><div id="dependencies" class="notice" hidden></div><div id="current" class="empty">실행하거나 아래 기록을 선택하면 결과가 표시됩니다.</div></section>
+<section class="card">
+  <div class="row"><h2 style="margin:0">테스트 실행</h2><span class="spacer"></span><button class="primary" id="start" disabled>테스트 실행</button><button id="stop" type="button" hidden>실행 중단</button></div>
+  <p class="sub" id="configSummary"></p><p id="testAvailability" role="status"></p>
+  <div class="row">
+    <button id="runExample" type="button">예제 실행</button>
+    <button id="emptyFolderButton" type="button" hidden>테스트 폴더 선택</button>
+    <button id="templateButton" type="button" aria-haspopup="dialog">테스트 파일 양식</button>
+  </div>
+  <div id="dependencies" class="notice" hidden></div><div id="current" class="empty">실행하거나 아래 기록을 선택하면 결과가 표시됩니다.</div>
+</section>
 <aside class="card"><h2>테스트 캡처</h2><div id="gallery" class="empty">선택한 실행의 캡처가 여기에 표시됩니다.</div></aside>
 <section class="card full"><div class="row"><h2 style="margin:0">실행 기록</h2><span id="count" class="sub"></span><input id="historySearch" type="search" placeholder="이름이나 폴더 검색" aria-label="실행 기록 검색"><select id="historyStatus" aria-label="상태 필터"><option value="">전체 상태</option><option value="passed">성공</option><option value="failed">실패</option><option value="interrupted">중단</option></select></div><div class="scroll"><table><thead><tr><th>시작</th><th>테스트 폴더</th><th>브라우저</th><th>상태</th><th>소요</th></tr></thead><tbody id="runs"></tbody></table></div><div class="pages"><span id="pageInfo" class="sub"></span><button id="prev">이전</button><button id="next">다음</button></div></section>
 </main>
@@ -101,7 +112,7 @@ header button{white-space:nowrap}
   <ol class="guide-steps">
     <li><strong>예제 실행</strong>으로 샘플 웹페이지의 제목과 본문을 자동으로 확인해 보세요.</li>
     <li><strong>실행 기록</strong>에서 방금 실행한 항목을 고르고 <strong>보고서</strong>에서 검증 항목과 실행 단계, 캡처를 봅니다.</li>
-    <li>내 화면을 테스트하려면 <strong>설정 → 폴더 선택</strong>에서 기존 Playwright 테스트 폴더를 고르세요. 새로 만들 때는 <strong>AI 테스트 안내</strong>에서 요청문과 파일 저장 방법을 확인하세요.</li>
+    <li>내 화면을 테스트하려면 <strong>설정 → 폴더 선택</strong>에서 기존 Playwright 테스트 폴더를 고르세요. 새로 만들 때는 <strong>테스트 파일 양식</strong>을 내려받거나 <strong>AI 테스트 안내</strong>를 이용하세요.</li>
     <li>파일을 준비한 뒤 <strong>폴더 내 테스트 실행</strong>을 누릅니다.</li>
   </ol>
   <p class="sub">테스트는 결과가 화면에 표시되거나 API 응답이 올 때까지 기다릴 수 있습니다. 보고서의 실행 단계에서 각 구간의 소요 시간을 확인하세요.</p>
@@ -145,9 +156,28 @@ header button{white-space:nowrap}
 - 계정 정보나 비밀번호는 코드에 넣지 마세요. 테스트 작성에 필요한 정보가 빠져 있으면 먼저 물어봐 주세요.</textarea>
   <div class="row guide-actions">
     <button id="copyAiPrompt" class="primary" type="button">요청문 복사</button>
+    <button id="aiTemplateButton" type="button" aria-haspopup="dialog">테스트 파일 양식</button>
     <button id="closeAiGuide" type="button">닫기</button>
     <span id="guideStatus" class="sub" role="status"></span>
   </div>
+</dialog>
+<dialog id="templateDialog" class="dialog" aria-labelledby="templateTitle">
+  <h2 id="templateTitle" tabindex="-1" autofocus>테스트 파일 양식</h2>
+  <p><code>first-test.spec.js</code>를 테스트 폴더에 저장하고 <strong>폴더 내 테스트 실행</strong>을 누르세요. 샘플 화면의 저장 동작을 바로 확인할 수 있습니다.</p>
+  <p class="sub">저장 위치 · <span id="templateFolder"></span></p>
+  <ul class="guide-steps">
+    <li><code>test('이름', …)</code>의 이름은 <strong>테스트 제목</strong>에 표시됩니다.</li>
+    <li><code>test.step('이름', …)</code>의 이름과 소요 시간은 <strong>실행 단계</strong>에 표시됩니다.</li>
+    <li><code>expect(대상, '조건 설명')</code>의 설명은 <strong>검증 항목</strong>에 통과·실패와 함께 표시됩니다.</li>
+  </ul>
+  <label for="templateCode">양식 코드</label>
+  <textarea id="templateCode" class="copy-field" rows="12" readonly spellcheck="false"></textarea>
+  <form method="dialog" class="row guide-actions">
+    <a id="downloadTemplate" class="button-link primary" href="/templates/first-test.spec.js" download="first-test.spec.js">양식 다운로드</a>
+    <button id="copyTemplate" type="button">코드 복사</button>
+    <button type="submit">닫기</button>
+    <span id="templateStatus" class="sub" role="status"></span>
+  </form>
 </dialog>
 <dialog id="handoffDialog" class="dialog" aria-labelledby="handoffTitle">
   <h2 id="handoffTitle">실행 인수인계</h2>
@@ -306,6 +336,24 @@ async function copyField(field, status, success) {
   }
 }
 
+async function openTestTemplate() {
+  const dialog = $('templateDialog');
+  try {
+    const response = await fetch($('downloadTemplate').href);
+    if (!response.ok) throw Error('테스트 양식을 불러오지 못했습니다.');
+    const code = await response.text();
+    if (dialog.open) return;
+    $('templateCode').value = code;
+    $('templateFolder').textContent = state.settings?.project_config
+      ? '프로젝트 Playwright 설정에 지정된 폴더'
+      : state.settings?.test_dir || '설정에서 지정한 테스트 폴더';
+    $('templateStatus').textContent = '';
+    dialog.showModal();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function openHandoff(id) {
   const dialog = $('handoffDialog');
   try {
@@ -339,6 +387,8 @@ $('helpAiGuide').onclick = () => {
 };
 $('copyFolder').onclick = () => copyField($('aiTestFolder'), $('guideStatus'), '폴더 경로를 복사했습니다.');
 $('copyAiPrompt').onclick = () => copyField($('aiPrompt'), $('guideStatus'), '요청문을 복사했습니다.');
+$('templateButton').onclick = $('aiTemplateButton').onclick = openTestTemplate;
+$('copyTemplate').onclick = () => copyField($('templateCode'), $('templateStatus'), '양식 코드를 복사했습니다.');
 $('copyHandoff').onclick = () => copyField($('handoffContent'), $('handoffStatus'), '인수인계를 복사했습니다.');
 $('handoffContent').oninput = () => {
   $('copyHandoff').disabled = !$('handoffContent').value.trim();

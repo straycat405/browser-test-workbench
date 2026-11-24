@@ -106,6 +106,24 @@ class WorkbenchTest(unittest.TestCase):
         self.assertFalse(list(ROOT.glob('**/run.json')))
 
 
+    def test_downloaded_test_template_runs(self):
+        test_folder = app.DATA / 'template-test'
+        test_folder.mkdir()
+        with urllib.request.urlopen(self.base + '/templates/first-test.spec.js') as response:
+            self.assertEqual(response.headers.get_content_type(), 'text/plain')
+            (test_folder / 'first-test.spec.js').write_bytes(response.read())
+
+        self.request('/api/settings', {'test_dir': str(test_folder), 'browser': 'chromium', 'headless': True,
+                                       'obsidian_enabled': False, 'obsidian_dir': ''})
+        rid = self.request('/api/start', {})['id']
+        data = self.wait_for_result(rid)
+        self.assertEqual(data['run']['status'], 'passed', data)
+        self.assertTrue(any(e['type'] == 'test_end' and e['title'].endswith('샘플 화면에서 저장 결과 확인')
+                            for e in data['events']))
+        self.assertTrue(any(e['type'] == 'step_end' and e['title'] == '저장 버튼 누르기' for e in data['events']))
+        self.assertEqual([check['title'] for check in data['verification']['checks']], ['저장 완료 문구가 표시된다'])
+        self.assertTrue(any(path.endswith('/result.png') for path in data['artifacts']))
+
     def test_import_existing_history(self):
         source = app.DATA / 'old-tool'
         run = source / 'out' / '20260101_120000_sample'

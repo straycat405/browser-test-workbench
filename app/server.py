@@ -764,6 +764,9 @@ class Handler(BaseHTTPRequestHandler):
             name = u.path.lstrip('/')
             content_type = 'text/css; charset=utf-8' if name.endswith('.css') else 'text/javascript; charset=utf-8'
             return self.send(200, (ROOT / 'app' / name).read_bytes(), content_type)
+        if u.path == '/templates/first-test.spec.js':
+            source = ROOT / 'app' / 'templates' / 'first-test.js'
+            return self.send(200, source.read_bytes(), 'text/plain; charset=utf-8')
         if u.path == '/markdown-it.mjs':
             script = ROOT / 'node_modules/markdown-it/dist/browser/markdown-it.esm.min.mjs'
             if script.is_file():
