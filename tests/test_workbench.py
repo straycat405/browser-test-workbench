@@ -189,7 +189,7 @@ class WorkbenchTest(unittest.TestCase):
         env['BTW_TEST_URL'] = self.base
         env['BTW_IMPORT_DIR'] = str(app.DATA / 'old-tool')
         completed = subprocess.run(['node', str(ROOT / 'tests' / 'ui-smoke.cjs')], cwd=str(ROOT),
-                                   env=env, capture_output=True, text=True, timeout=75)
+                                   env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=75)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
 
